@@ -1,0 +1,589 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "AWS Config rules to verify AWS best practices are being followed",
+  "Parameters": {
+    "MaximumKeyAge": {
+      "Type": "String",
+      "Description": "Maximum age for an IAM User's acces key",
+      "Default": "90",
+      "MaxLength": "3",
+      "AllowedValues": [
+        "30",
+        "60",
+        "90",
+        "120",
+        "180"
+      ]
+    },
+    "AccessLogsBucketName": {
+      "Type": "String",
+      "Description": "The name of an existing S3 bucket that stores S3 Access Logs",
+      "Default": "s3-prod-logs-syd-accountid",
+      "MinLength": "3",
+      "MaxLength": "63"
+    },
+    "CloudTrailS3Bucket": {
+      "Type": "String",
+      "Description": "The name of an existing S3 bucket that stores CloudTrail Logs",
+      "Default": "cloudtrail-prod-logs-syd-accountid",
+      "MinLength": "3",
+      "MaxLength": "63"
+    },
+    "ResourceTag1Key": {
+      "Type": "String",
+      "Description": "Name Tag (AppStream)",
+      "Default": "Name"
+    },
+    "PwdPolicyRequireUppercaseCharacters": {
+      "Type": "String",
+      "Description": "",
+      "Default": "true",
+      "AllowedValues": [
+        "true",
+        "false"
+      ]
+    },
+    "PwdPolicyRequireLowercaseCharacters": {
+      "Type": "String",
+      "Description": "",
+      "Default": "true",
+      "AllowedValues": [
+        "true",
+        "false"
+      ]
+    },
+    "PwdPolicyRequireSymbols": {
+      "Type": "String",
+      "Description": "",
+      "Default": "true",
+      "AllowedValues": [
+        "true",
+        "false"
+      ]
+    },
+    "PwdPolicyRequireNumbers": {
+      "Type": "String",
+      "Description": "",
+      "Default": "true",
+      "AllowedValues": [
+        "true",
+        "false"
+      ]
+    },
+    "PwdPolicyMinimumPasswordLength": {
+      "Type": "Number",
+      "Description": "",
+      "Default": "10"
+    },
+    "PwdPolicyPasswordReusePrevention": {
+      "Type": "Number",
+      "Description": "",
+      "Default": "5"
+    },
+    "PwdPolicyMaxPasswordAge": {
+      "Type": "Number",
+      "Description": "",
+      "Default": "90"
+    }
+  },
+  "Resources": {
+    "CheckBucketLogging": {
+      "Properties": {
+        "ConfigRuleName": "bucket-logging-enabled",
+        "Description": "Checks whether logging is enabled for all S3 buckets.",
+        "InputParameters": {
+          "targetBucket": {
+            "Ref": "AccessLogsBucketName"
+          }
+        },
+        "Source": {
+          "Owner": "AWS",
+          "SourceIdentifier": "S3_BUCKET_LOGGING_ENABLED"
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "CheckBucketVersioning": {
+      "Properties": {
+        "ConfigRuleName": "bucket-versioning-enabled",
+        "Description": "Checks whether versioning is enabled for all S3 buckets.",
+        "Source": {
+          "Owner": "AWS",
+          "SourceIdentifier": "S3_BUCKET_VERSIONING_ENABLED"
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "CheckUserMFAEnabled": {
+      "DependsOn": "AllowRuleUserMFAEnabledConfig",
+      "Properties": {
+        "ConfigRuleName": "user-mfa-enabled",
+        "Description": "Check if all IAM users have MFA enabled",
+        "Scope": {
+          "ComplianceResourceTypes": [
+            "AWS::IAM::User"
+          ]
+        },
+        "InputParameters": {
+          "Null": "Parameter"
+        },
+        "Source": {
+          "Owner": "CUSTOM_LAMBDA",
+          "SourceIdentifier": {
+            "Fn::GetAtt": [
+              "RuleUserMFAEnabled",
+              "Arn"
+            ]
+          },
+          "SourceDetails": [
+            {
+              "MessageType": "ConfigurationItemChangeNotification",
+              "EventSource": "aws.config"
+            }
+          ]
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "RuleUserMFAEnabled": {
+      "DependsOn": [
+        "LambdaExecutionRole"
+      ],
+      "Properties": {
+        "Description": "Check if all IAM users have MFA enabled",
+        "Handler": "index.handler",
+        "Runtime": "nodejs4.3",
+        "Timeout": "30",
+        "Role": {
+          "Fn::GetAtt": [
+            "LambdaExecutionRole",
+            "Arn"
+          ]
+        },
+        "Code": {
+          "ZipFile": {
+            "Fn::Join": [
+              "",
+              [
+                "//\n// This file made available under CC0 1.0 Universal (https://creativecommons.org/publicdomain/zero/1.0/legalcode)\n//\n// Ensure IAM User has MFA Enabled\n// Description: Checks that all IAM Users have MFA Enabled\n// \n// Trigger Type: Change Triggered\n// Scope of Changes: IAM:User\n// Required Parameter: None\n\n'use strict';\nvar aws = require('aws-sdk');\nvar config = new aws.ConfigService();\nvar iam = new aws.IAM();\n\nfunction checkDefined(ref, name) {\n    if (!ref) err(null, 'RefError: '+ name +' is not defined');\n    console.log(name);\n    console.log(JSON.stringify(ref));\n    return ref;\n}\n\nfunction err(e, msg){console.error(msg); throw e?e:new Error(msg); }\n \n// Check whether the the resource has been deleted. If it has, then the evaluation is unnecessary.\n \nfunction isApplicable(configurationItem, event){\n    checkDefined(configurationItem, \"configurationItem\");\n    checkDefined(event, \"event\");\n    var status = configurationItem.configurationItemStatus;\n    var eventLeftScope = event.eventLeftScope;\n    return ('OK' === status || 'ResourceDiscovered' === status) && false === eventLeftScope;\n}\n \n// This is the handler that's invoked by Lambda\n\nexports.handler = function(event, context) {\n    event = checkDefined(event, \"event\");\n    var invokingEvent = JSON.parse(event.invokingEvent);\n    var configurationItem = checkDefined(invokingEvent.configurationItem, \"invokingEvent.configurationItem\");\n    var putEvaluationsRequest = {};\n    \n    // Only call out Async if a User\n    if (isApplicable(configurationItem, event) && configurationItem.resourceType === 'AWS::IAM::User') {\n        var params = { UserName: configurationItem.resourceName };\n        iam.listMFADevices(params, function(err, mfadata) {\n            if (err) throw err;\n\n            var ret = 'NON_COMPLIANT';\n            if (mfadata.MFADevices.length > 0) ret = 'COMPLIANT';\n\n            putEvaluationsRequest.Evaluations = [{\n                ComplianceResourceType: configurationItem.resourceType,\n                ComplianceResourceId: configurationItem.resourceId,\n                ComplianceType: ret,\n                OrderingTimestamp: configurationItem.configurationItemCaptureTime\n            }];\n                \n            putEvaluationsRequest.ResultToken = event.resultToken;\n             \n            // Invoke the Config API to report the result of the evaluation\n            config.putEvaluations(putEvaluationsRequest, function (err, data) {\n                if (err) throw err;\n                context.succeed(data);\n            });\n        });\n    } else {\n        // Put together the request that reports the evaluation status\n        // Note that we're choosing to report this evaluation against the resource that was passed in.\n        // You can choose to report this against any other resource type, as long as it is supported by Config rules\n        putEvaluationsRequest.Evaluations = [ { ComplianceResourceType: configurationItem.resourceType, ComplianceResourceId: configurationItem.resourceId, ComplianceType: 'NOT_APPLICABLE', OrderingTimestamp: configurationItem.configurationItemCaptureTime } ];\n        putEvaluationsRequest.ResultToken = event.resultToken;\n        // Invoke the Config API to report the result of the evaluation\n        config.putEvaluations(putEvaluationsRequest, function (e, data) { if (e) err(e); });\n    }\n};\n"
+              ]
+            ]
+          }
+        }
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "AllowRuleUserMFAEnabledAccount": {
+      "Properties": {
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "RuleUserMFAEnabled",
+            "Arn"
+          ]
+        },
+        "Principal": {
+          "Ref": "AWS::AccountId"
+        },
+        "Action": "lambda:InvokeFunction"
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "AllowRuleUserMFAEnabledConfig": {
+      "Properties": {
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "RuleUserMFAEnabled",
+            "Arn"
+          ]
+        },
+        "Principal": "config.amazonaws.com",
+        "Action": "lambda:InvokeFunction"
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "CheckUserKeyRotation": {
+      "DependsOn": "AllowRuleUserKeyRotationConfig",
+      "Properties": {
+        "ConfigRuleName": "user-key-rotation",
+        "Description": "Check if IAM users access keys have been rotated",
+        "Scope": {
+          "ComplianceResourceTypes": [
+            "AWS::IAM::User"
+          ]
+        },
+        "InputParameters": {
+          "MaximumAccessKeyAge": {
+            "Ref": "MaximumKeyAge"
+          }
+        },
+        "Source": {
+          "Owner": "CUSTOM_LAMBDA",
+          "SourceIdentifier": {
+            "Fn::GetAtt": [
+              "RuleUserKeyRotation",
+              "Arn"
+            ]
+          },
+          "SourceDetails": [
+            {
+              "MessageType": "ConfigurationItemChangeNotification",
+              "EventSource": "aws.config"
+            }
+          ]
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "RuleUserKeyRotation": {
+      "DependsOn": [
+        "LambdaExecutionRole"
+      ],
+      "Properties": {
+        "Description": "Check if IAM users access keys have been rotated",
+        "Handler": "index.handler",
+        "Runtime": "nodejs4.3",
+        "Timeout": "30",
+        "Role": {
+          "Fn::GetAtt": [
+            "LambdaExecutionRole",
+            "Arn"
+          ]
+        },
+        "Code": {
+          "ZipFile": {
+            "Fn::Join": [
+              "",
+              [
+                "var aws = require('aws-sdk');\nvar config = new aws.ConfigService();\nvar iam = new aws.IAM();\n\n// Helper function used to validate input \nfunction checkDefined(ref, name) {\n    if (!ref) err(null, 'RefError: '+ name +' is not defined');\n    console.log(name, JSON.stringify(ref));\n    return ref;\n}\n\nfunction err(e, msg) { console.error(msg); throw e ? e : new Error(msg); }\n \n// Check whether the the resource has been deleted. If it has, then the evaluation is unnecessary.\nfunction isApplicable(configurationItem, event) {\n\n\tcheckDefined(configurationItem, \"configurationItem\");\n\tcheckDefined(event, \"event\");\n\tvar status = configurationItem.configurationItemStatus;\n\tvar eventLeftScope = event.eventLeftScope;\n\treturn ('OK' === status || 'ResourceDiscovered' === status) && false === eventLeftScope;\n\t\n}\n \n// This is the handler that's invoked by Lambda\nexports.handler = function(event, context) {\n\t\n\tevent = checkDefined(event, \"event\");\n\tvar invokingEvent = JSON.parse(event.invokingEvent);\n  var ruleParameters = JSON.parse(event.ruleParameters);\n\tvar configurationItem = checkDefined(invokingEvent.configurationItem, \"invokingEvent.configurationItem\");\n\tvar putEvaluationsRequest = {};\n    \n\t// Only run check on IAM Users\n\tif (isApplicable(configurationItem, event) && configurationItem.resourceType === 'AWS::IAM::User') {\n\n\t\t// List all Access Keys for user\n\t\tvar params = { UserName: configurationItem.resourceName };\n\t\tiam.listAccessKeys(params, function(e, keydata) {\n\t\t\tif(e) err(e);\n\t\t\tvar ret = 'NOT_APPLICABLE';\n\t\t\tnote = 'User does not have any access keys';\n\t\t\t// Only check dates on users with keys\n\t\t\tif (keydata.AccessKeyMetadata.length > 0) {\n\n\t\t\t\t// Check all keys\n\t\t\t\tfor (var k = 0; k < keydata.AccessKeyMetadata.length; k++) {\n\n\t\t\t\t\tvar now = Date.now();\n\t\t\t\t\tvar keyage = Math.floor((now - Date.parse(keydata.AccessKeyMetadata[k].CreateDate)) / 86400000);\n\t\t\t\t\tnote = \"Key is \"+ keyage +\" days old.\";\n\t\t\t\t\tif (keyage > ruleParameters.MaximumAccessKeyAge) {\n\n\t\t\t\t\t\tret = 'NON_COMPLIANT';\n\t\t\t\t\t\tbreak; // we have an answer. bail out.\n\n\t\t\t\t\t} else {\n\t\t\t\t\t\t\n\t\t\t\t\t\tret = 'COMPLIANT';\n\t\t\t\t\t\t\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t} else {\n\t\t\t\tconsole.log(keyerr);\n\t\t\t}\n\t\t\n\t\t\tputEvaluationsRequest.Evaluations = [{\n\t\t\t\tComplianceResourceType: configurationItem.resourceType,\n\t\t\t\tComplianceResourceId: configurationItem.resourceId,\n\t\t\t\tComplianceType: ret,\n\t\t\t\tAnnotation: note,\n\t\t\t\tOrderingTimestamp: configurationItem.configurationItemCaptureTime\n\t\t\t}];\n\t\t\tputEvaluationsRequest.ResultToken = event.resultToken;\n\t\t \n\t\t\t// Invoke the Config API to report the result of the evaluation\n\t\t\tconfig.putEvaluations(putEvaluationsRequest, function (e, data) {\n\t\t\t\tif (e) err(e);\n\t\t\t\tcontext.succeed(data);\n\t\t\t});\n\n\t\t});\n\n\t} else {\n \n\t\t// NOT APPLICABLE\n\t\tputEvaluationsRequest.Evaluations = [ { ComplianceResourceType: configurationItem.resourceType, ComplianceResourceId: configurationItem.resourceId, ComplianceType: 'NOT_APPLICABLE', OrderingTimestamp: configurationItem.configurationItemCaptureTime } ];\n\t\tputEvaluationsRequest.ResultToken = event.resultToken;\n\t\tconfig.putEvaluations(putEvaluationsRequest, function (e, data) { if (e) err(e); context.succeed(data);});\n\t}\n    \n};\n"
+              ]
+            ]
+          }
+        }
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "AllowRuleUserKeyRotationAccount": {
+      "Properties": {
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "RuleUserKeyRotation",
+            "Arn"
+          ]
+        },
+        "Principal": {
+          "Ref": "AWS::AccountId"
+        },
+        "Action": "lambda:InvokeFunction"
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "AllowRuleUserKeyRotationConfig": {
+      "Properties": {
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "RuleUserKeyRotation",
+            "Arn"
+          ]
+        },
+        "Principal": "config.amazonaws.com",
+        "Action": "lambda:InvokeFunction"
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "CheckRootKeyDisabled": {
+      "DependsOn": "AllowRuleRootKeyDisabledConfig",
+      "Properties": {
+        "ConfigRuleName": "root-key-disabled",
+        "Description": "Check if root's access keys have been removed",
+        "InputParameters": {
+          "Null": "Parameter"
+        },
+        "Source": {
+          "Owner": "CUSTOM_LAMBDA",
+          "SourceIdentifier": {
+            "Fn::GetAtt": [
+              "RuleRootKeyDisabled",
+              "Arn"
+            ]
+          },
+          "SourceDetails": [
+            {
+              "MessageType": "ScheduledNotification",
+              "EventSource": "aws.config"
+            }
+          ]
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "RuleRootKeyDisabled": {
+      "DependsOn": [
+        "LambdaExecutionRole"
+      ],
+      "Properties": {
+        "Description": "Check if root's access keys have been removed",
+        "Handler": "index.handler",
+        "Runtime": "nodejs4.3",
+        "Timeout": "30",
+        "Role": {
+          "Fn::GetAtt": [
+            "LambdaExecutionRole",
+            "Arn"
+          ]
+        },
+        "Code": {
+          "ZipFile": {
+            "Fn::Join": [
+              "",
+              [
+                "//\n// This file made available under CC0 1.0 Universal (https://creativecommons.org/publicdomain/zero/1.0/legalcode)\n//\n// Ensure Access Key Disabled on Root Account\n// Description: Checks that the Root Account's Access Keys have been disabled.\n//\n// Trigger Type: Periodic\n// Required Parameter: None\n\nvar aws  = require('aws-sdk');\nvar config = new aws.ConfigService();\nvar iam = new aws.IAM();\n\n\nfunction checkDefined(ref, name) {\n    if (!ref) err(null, 'RefError: '+ name +' is not defined');\n    console.log(name, JSON.stringify(ref));\n    return ref;\n}\n\nfunction err(e, msg){console.error(msg); throw e?e:new Error(msg); }\n \n\n \n// This is the handler that's invoked by Lambda\nexports.handler = function(event, context) {\n    checkDefined(event, \"event\");\n    var invokingEvent = JSON.parse(event.invokingEvent);\n    var accountId = event.accountId;\n    var orderingTimestamp = invokingEvent.notificationCreationTime;\n    \n    iam.getAccountSummary(function(err, iamdata) {\n    \n        var compliance = 'NON_COMPLIANT';\n        \n        if (iamdata.SummaryMap['AccountAccessKeysPresent'] === 0) { compliance = 'COMPLIANT'; }\n        \n        putEvaluationsRequest = {\n            Evaluations: [{\n                ComplianceResourceType: 'AWS::::Account',\n                ComplianceResourceId: accountId,\n                ComplianceType: compliance,\n                OrderingTimestamp: orderingTimestamp\n            }],\n           ResultToken: event.resultToken\n        };\n\n        config.putEvaluations(putEvaluationsRequest, function (e, data) {\n            if (e) err(e);\n            context.succeed(data);\n        });\n    });\n};\n"
+              ]
+            ]
+          }
+        }
+      },
+      "Type": "AWS::Lambda::Function"
+    },
+    "AllowRuleRootKeyDisabledAccount": {
+      "Properties": {
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "RuleRootKeyDisabled",
+            "Arn"
+          ]
+        },
+        "Principal": {
+          "Ref": "AWS::AccountId"
+        },
+        "Action": "lambda:InvokeFunction"
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "AllowRuleRootKeyDisabledConfig": {
+      "Properties": {
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "RuleRootKeyDisabled",
+            "Arn"
+          ]
+        },
+        "Principal": "config.amazonaws.com",
+        "Action": "lambda:InvokeFunction"
+      },
+      "Type": "AWS::Lambda::Permission"
+    },
+    "CheckRDSEncrypted": {
+      "Properties": {
+        "ConfigRuleName": "rds-storage-encrypted",
+        "Description": "Checks whether storage encryption is enabled for your RDS DB instances.",
+        "Scope": {
+          "ComplianceResourceTypes": [
+            "AWS::RDS::DBInstance"
+          ]
+        },
+        "Source": {
+          "Owner": "AWS",
+          "SourceIdentifier": "RDS_STORAGE_ENCRYPTED"
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "CheckEBSEncrypted": {
+      "Properties": {
+        "ConfigRuleName": "ebs-encrypted-volumes",
+        "Description": "Checks whether EBS volumes that are in an attached state are encrypted.",
+        "Scope": {
+          "ComplianceResourceTypes": [
+            "AWS::EC2::Volume"
+          ]
+        },
+        "Source": {
+          "Owner": "AWS",
+          "SourceIdentifier": "ENCRYPTED_VOLUMES"
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "CheckCloudTrailEnabled": {
+      "Properties": {
+        "ConfigRuleName": "cloud-trail-enabled",
+        "Description": "Checks whether AWS CloudTrail is enabled in your AWS account. Optionally, you can specify which S3 bucket, SNS topic, and Amazon CloudWatch Logs ARN to use.",
+        "InputParameters": {
+          "s3BucketName": {
+            "Ref": "CloudTrailS3Bucket"
+          }
+        },
+        "Source": {
+          "Owner": "AWS",
+          "SourceIdentifier": "CLOUD_TRAIL_ENABLED"
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "CheckRootMFAEnabled": {
+      "Properties": {
+        "ConfigRuleName": "root-mfa-enabled",
+        "Description": "Checks whether the root user of your AWS account requires multi-factor authentication for console sign-in.",
+        "Source": {
+          "Owner": "AWS",
+          "SourceIdentifier": "ROOT_ACCOUNT_MFA_ENABLED"
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "CheckRDSBackups": {
+      "Properties": {
+        "ConfigRuleName": "rds-backups-enabled",
+        "Description": "Checks whether RDS DB instances have backups enabled. Optionally, the rule checks the backup retention period and the backup window.",
+        "Scope": {
+          "ComplianceResourceTypes": [
+            "AWS::RDS::DBInstance"
+          ]
+        },
+        "Source": {
+          "Owner": "AWS",
+          "SourceIdentifier": "DB_INSTANCE_BACKUP_ENABLED"
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "CheckRDSMultiAZ": {
+      "Properties": {
+        "ConfigRuleName": "rds-multiaz-support",
+        "Description": "Checks whether high availability is enabled for your RDS DB instances.",
+        "Scope": {
+          "ComplianceResourceTypes": [
+            "AWS::RDS::DBInstance"
+          ]
+        },
+        "Source": {
+          "Owner": "AWS",
+          "SourceIdentifier": "RDS_MULTI_AZ_SUPPORT"
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "CheckTagStandard": {
+      "Properties": {
+        "ConfigRuleName": "tag-standard",
+        "Description": "Checks whether your resources have the tags that you specify. For example, you can check whether your EC2 instances have the 'CostCenter' tag. Separate multiple values with commas",
+        "Scope": {
+          "ComplianceResourceTypes": [
+            "AWS::EC2::Instance",
+            "AWS::EC2::NetworkInterface",
+            "AWS::EC2::SecurityGroup",
+            "AWS::EC2::Volume",
+            "AWS::EC2::CustomerGateway",
+            "AWS::EC2::InternetGateway",
+            "AWS::EC2::NetworkAcl",
+            "AWS::EC2::RouteTable",
+            "AWS::EC2::Subnet",
+            "AWS::EC2::VPC",
+            "AWS::EC2::VPNConnection",
+            "AWS::EC2::VPNGateway",
+            "AWS::ACM::Certificate",
+            "AWS::RDS::DBInstance",
+            "AWS::RDS::DBSnapshot",
+            "AWS::RDS::EventSubscription"
+          ]
+        },
+        "InputParameters": {
+          "tag1Key": {
+            "Ref": "ResourceTag1Key"
+          }
+        },
+        "Source": {
+          "Owner": "AWS",
+          "SourceIdentifier": "REQUIRED_TAGS"
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "CheckIncomingTraffic": {
+      "Properties": {
+        "ConfigRuleName": "restricted-incoming-traffic",
+        "Description": "Checks whether security groups that are in use disallow unrestricted incoming TCP traffic to the specified ports.",
+        "Scope": {
+          "ComplianceResourceTypes": [
+            "AWS::EC2::SecurityGroup"
+          ]
+        },
+        "InputParameters": {
+          "blockedPort1": "22",
+          "blockedPort2": "25",
+          "blockedPort3": "3389",
+          "blockedPort4": "1433",
+          "blockedPort5": "3306"
+        },
+        "Source": {
+          "Owner": "AWS",
+          "SourceIdentifier": "RESTRICTED_INCOMING_TRAFFIC"
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "CheckIAMPasswordPolicy": {
+      "Properties": {
+        "ConfigRuleName": "iam-password-policy",
+        "Description": "Checks whether the account password policy for IAM users meets the specified requirements.",
+        "Scope": {},
+        "InputParameters": {
+          "RequireUppercaseCharacters": {
+            "Ref": "PwdPolicyRequireUppercaseCharacters"
+          },
+          "RequireLowercaseCharacters": {
+            "Ref": "PwdPolicyRequireLowercaseCharacters"
+          },
+          "RequireSymbols": {
+            "Ref": "PwdPolicyRequireSymbols"
+          },
+          "RequireNumbers": {
+            "Ref": "PwdPolicyRequireNumbers"
+          },
+          "MinimumPasswordLength": {
+            "Ref": "PwdPolicyMinimumPasswordLength"
+          },
+          "PasswordReusePrevention": {
+            "Ref": "PwdPolicyPasswordReusePrevention"
+          },
+          "MaxPasswordAge": {
+            "Ref": "PwdPolicyMaxPasswordAge"
+          }
+        },
+        "Source": {
+          "Owner": "AWS",
+          "SourceIdentifier": "IAM_PASSWORD_POLICY"
+        }
+      },
+      "Type": "AWS::Config::ConfigRule"
+    },
+    "LambdaExecutionRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Path": "/",
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AWSCloudFormationReadOnlyAccess",
+          "arn:aws:iam::aws:policy/service-role/AWSConfigRulesExecutionRole",
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+          "arn:aws:iam::aws:policy/ReadOnlyAccess"
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    }
+  }
+}

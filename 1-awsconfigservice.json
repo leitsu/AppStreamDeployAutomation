@@ -1,0 +1,344 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Provision AWS Config Service to log to a dedicated bucket at scheduled intervals. The S3 bucket is created as part of the template",
+  "Parameters": {
+    "ConfigSnapshotFrequency": {
+      "Type": "String",
+      "Description": "AWS Config configuration snapshot frequency",
+      "Default": "One_Hour",
+      "AllowedValues": [
+        "One_Hour",
+        "Three_Hours",
+        "Six_Hours",
+        "Twelve_Hours",
+        "TwentyFour_Hours"
+      ]
+    },
+    "S3AccessLogsBucketName": {
+      "Type": "String",
+      "Description": "The name of an existing S3 bucket for storing S3 Access Logs - The s3 bucket name created in the first security script 0-createbucketloggingbucket.json",
+      "Default": "s3-prod-logs-syd-accountid",
+      "MinLength": "3",
+      "MaxLength": "63"
+    },
+    "ConfigBucketName": {
+      "Type": "String",
+      "Description": "The name of the S3 bucket Config Service will store configuration snapshots in.",
+      "Default": "config-prod-snapshots-syd-accountid"
+    },
+    "BucketLogging": {
+      "Type": "String",
+      "Description": "Enable bucket access logging for the config snapshot storage bucket",
+      "Default": "Yes",
+      "AllowedValues": [
+        "Yes",
+        "No"
+      ]
+    },
+    "BucketPolicyExplicitDeny": {
+      "Type": "String",
+      "Description": "OPTIONAL: Explicitly deny destructive actions to the bucket",
+      "Default": "Yes",
+      "AllowedValues": [
+        "No",
+        "Yes"
+      ]
+    },
+    "InfrequentAccessTransitionTime": {
+      "Type": "Number",
+      "Description": "Number of days to retain logs in the S3 Bucket before moving to Infrequent Access",
+      "Default": "90"
+    }
+  },
+  "Resources": {
+    "ConfigRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "config.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSConfigRole"
+        ],
+        "Path": "/service-role/",
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:PutObject"
+                  ],
+                  "Resource": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:aws:s3:::",
+                        {
+                          "Ref": "ConfigBucket"
+                        },
+                        "/*"
+                      ]
+                    ]
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetBucketAcl"
+                  ],
+                  "Resource": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:aws:s3:::",
+                        {
+                          "Ref": "ConfigBucket"
+                        }
+                      ]
+                    ]
+                  }
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": "ConfigServiceS3Interaction"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "DeliveryChannel": {
+      "DependsOn": "ConfigRole",
+      "Properties": {
+        "ConfigSnapshotDeliveryProperties": {
+          "DeliveryFrequency": {
+            "Ref": "ConfigSnapshotFrequency"
+          }
+        },
+        "S3BucketName": {
+          "Ref": "ConfigBucket"
+        }
+      },
+      "Type": "AWS::Config::DeliveryChannel"
+    },
+    "ConfigRecorder": {
+      "Properties": {
+        "Name": "default",
+        "RecordingGroup": {
+          "AllSupported": "true",
+          "IncludeGlobalResourceTypes": "true"
+        },
+        "RoleARN": {
+          "Fn::GetAtt": [
+            "ConfigRole",
+            "Arn"
+          ]
+        }
+      },
+      "Type": "AWS::Config::ConfigurationRecorder"
+    },
+    "ConfigBucket": {
+      "Properties": {
+        "BucketName": {
+          "Ref": "ConfigBucketName"
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "LoggingConfiguration": {
+          "Fn::If": [
+            "BucketLogging",
+            {
+              "DestinationBucketName": {
+                "Ref": "S3AccessLogsBucketName"
+              },
+              "LogFilePrefix": {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Ref": "ConfigBucketName"
+                    },
+                    "/"
+                  ]
+                ]
+              }
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "TransitionToIA",
+              "Status": "Enabled",
+              "Transitions": [
+                {
+                  "StorageClass": "STANDARD_IA",
+                  "TransitionInDays": {
+                    "Ref": "InfrequentAccessTransitionTime"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "Type": "AWS::S3::Bucket"
+    },
+    "BucketPolicy": {
+      "DependsOn": [
+        "ConfigBucket"
+      ],
+      "Properties": {
+        "Bucket": {
+          "Ref": "ConfigBucket"
+        },
+        "PolicyDocument": {
+          "Id": "ConfigService",
+          "Statement": [
+            {
+              "Fn::If": [
+                "ExplicitDeny",
+                {
+                  "Action": [
+                    "s3:DeleteBucket",
+                    "s3:DeleteBucketPolicy",
+                    "s3:DeleteBucketWebsite",
+                    "s3:DeleteObject",
+                    "s3:DeleteObjectVersion",
+                    "s3:PutAccelerateConfiguration",
+                    "s3:PutBucketAcl",
+                    "s3:PutBucketCORS",
+                    "s3:PutBucketLogging",
+                    "s3:PutBucketPolicy",
+                    "s3:PutBucketRequestPayment",
+                    "s3:PutBucketVersioning",
+                    "s3:PutBucketWebsite",
+                    "s3:PutLifecycleConfiguration",
+                    "s3:PutReplicationConfiguration",
+                    "s3:ReplicateDelete",
+                    "s3:ReplicateObject",
+                    "s3:RestoreObject"
+                  ],
+                  "Effect": "Deny",
+                  "Principal": "*",
+                  "Resource": [
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:aws:s3:::",
+                          {
+                            "Ref": "ConfigBucket"
+                          },
+                          "/*"
+                        ]
+                      ]
+                    },
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:aws:s3:::",
+                          {
+                            "Ref": "ConfigBucket"
+                          }
+                        ]
+                      ]
+                    }
+                  ],
+                  "Sid": "DenyDestructiveActions"
+                },
+                {
+                  "Ref": "AWS::NoValue"
+                }
+              ]
+            },
+            {
+              "Action": "s3:GetBucketAcl",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudtrail.amazonaws.com"
+              },
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "ConfigBucket"
+                    }
+                  ]
+                ]
+              },
+              "Sid": "ConfigServiceACLCheck"
+            },
+            {
+              "Action": "s3:PutObject",
+              "Condition": {
+                "StringEquals": {
+                  "s3:x-amz-acl": "bucket-owner-full-control"
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudtrail.amazonaws.com"
+              },
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:aws:s3:::",
+                      {
+                        "Ref": "ConfigBucket"
+                      },
+                      "/*"
+                    ]
+                  ]
+                }
+              ],
+              "Sid": "ConfigServiceWrite"
+            }
+          ],
+          "Version": "2012-10-17"
+        }
+      },
+      "Type": "AWS::S3::BucketPolicy"
+    }
+  },
+  "Conditions": {
+    "BucketLogging": {
+      "Fn::Equals": [
+        {
+          "Ref": "BucketLogging"
+        },
+        "Yes"
+      ]
+    },
+    "ExplicitDeny": {
+      "Fn::Equals": [
+        {
+          "Ref": "BucketPolicyExplicitDeny"
+        },
+        "Yes"
+      ]
+    }
+  }
+}

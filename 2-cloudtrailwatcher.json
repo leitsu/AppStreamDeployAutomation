@@ -1,0 +1,1399 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "This template will configure CloudTrail to log all AWS API calls to CloudWatch Logs and an S3 Bucket with optional KMS encryption. CLoudWatch Logs has a configurable retention policy and a predefined set of Log Filters which will generate alarms for these events to an SNS Topic which  will then send emails to a nominated email address. The S3 Bucket has a configurable retention policy, after which logs will be moved into Glacier.",
+  "Parameters": {
+    "CloudWatchLogsRetentionTime": {
+      "Type": "Number",
+      "Description": "Number of days to retain logs in CloudWatch Logs. 0=Forever",
+      "Default": "90",
+      "AllowedValues": [
+        "1",
+        "3",
+        "5",
+        "7",
+        "14",
+        "30",
+        "60",
+        "90",
+        "120",
+        "150",
+        "180",
+        "365",
+        "400",
+        "545",
+        "731",
+        "1827",
+        "3653"
+      ]
+    },
+    "InfrequentAccessTransitionTime": {
+      "Type": "Number",
+      "Description": "Number of days to retain logs in the S3 Bucket before moving to Infrequent Access",
+      "Default": "90"
+    },
+    "CloudTrailS3BucketName": {
+      "Type": "String",
+      "Description": "The name of the S3 bucket to create for CloudTrail to send logs to.",
+      "Default": "cloudtrail-prod-logs-syd-accountid"
+    },
+    "AlarmPrefix": {
+      "Type": "String",
+      "Description": "Optional prefix to use for Alarm Names. This appears in the SNS notification Subject and Body",
+      "Default": "CloudTrailAlarm-"
+    },
+    "AlertEmail": {
+      "Type": "String",
+      "Description": "Email address to notify when activity has triggered an alarm",
+      "Default": "email@address.com"
+    },
+    "EncryptLogs": {
+      "Type": "String",
+      "Description": "OPTIONAL: Use KMS to enrypt logs stored in S3. A new key will be created",
+      "Default": "Yes",
+      "AllowedValues": [
+        "No",
+        "Yes"
+      ]
+    },
+    "BucketPolicyExplicitDeny": {
+      "Type": "String",
+      "Description": "OPTIONAL: Explicitly deny destructive actions to the bucket",
+      "Default": "Yes",
+      "AllowedValues": [
+        "No",
+        "Yes"
+      ]
+    },
+    "AccessLogsBucketName": {
+      "Type": "String",
+      "Description": "The name of an existing S3 bucket for storing S3 Access Logs",
+      "Default": "s3-prod-logs-syd-accountid",
+      "MinLength": "3",
+      "MaxLength": "63",
+      "AllowedPattern": "([a-zA-Z0-9]){1}([a-zA-Z0-9-])*"
+    },
+    "ActivityRegion": {
+      "Type": "String",
+      "Description": "Alarm on events OUTSIDE of the selected region",
+      "Default": "ap-southeast-2",
+      "AllowedValues": [
+        "None",
+        "eu-west-1",
+        "ap-southeast-1",
+        "ap-southeast-2",
+        "eu-central-1",
+        "ap-northeast-2",
+        "ap-northeast-1",
+        "us-east-1",
+        "sa-east-1",
+        "us-west-1",
+        "us-west-2"
+      ]
+    }
+  },
+  "Resources": {
+    "CloudTrailKMSKey": {
+      "DeletionPolicy": "Retain",
+      "Condition": "KMSEncryptLogs",
+      "Properties": {
+        "Description": "KMS Key for Cloudtrail to use to encrypt logs stored in S3",
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Id": "Key policy created by CloudTrail",
+          "Statement": [
+            {
+              "Sid": "Enable IAM User Permissions",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": [
+                  {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:aws:iam::",
+                        {
+                          "Ref": "AWS::AccountId"
+                        },
+                        ":root"
+                      ]
+                    ]
+                  }
+                ]
+              },
+              "Action": "kms:*",
+              "Resource": "*"
+            },
+            {
+              "Sid": "Allow CloudTrail to encrypt logs",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "cloudtrail.amazonaws.com"
+                ]
+              },
+              "Action": "kms:GenerateDataKey*",
+              "Resource": "*",
+              "Condition": {
+                "StringLike": {
+                  "kms:EncryptionContext:aws:cloudtrail:arn": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:aws:cloudtrail:*:",
+                        {
+                          "Ref": "AWS::AccountId"
+                        },
+                        ":trail/*"
+                      ]
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "Sid": "Allow CloudTrail to describe key",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "cloudtrail.amazonaws.com"
+                ]
+              },
+              "Action": "kms:DescribeKey",
+              "Resource": "*"
+            },
+            {
+              "Sid": "Allow principals in the account to decrypt log files",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "*"
+              },
+              "Action": [
+                "kms:Decrypt",
+                "kms:ReEncryptFrom"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "kms:CallerAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "StringLike": {
+                  "kms:EncryptionContext:aws:cloudtrail:arn": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:aws:cloudtrail:*:",
+                        {
+                          "Ref": "AWS::AccountId"
+                        },
+                        ":trail/*"
+                      ]
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "Sid": "Allow alias creation during setup",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "*"
+              },
+              "Action": "kms:CreateAlias",
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "kms:ViaService": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "ec2.",
+                        {
+                          "Ref": "AWS::Region"
+                        },
+                        ".amazonaws.com"
+                      ]
+                    ]
+                  },
+                  "kms:CallerAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            },
+            {
+              "Sid": "Enable cross account log decryption",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "*"
+              },
+              "Action": [
+                "kms:Decrypt",
+                "kms:ReEncryptFrom"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "kms:CallerAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                },
+                "StringLike": {
+                  "kms:EncryptionContext:aws:cloudtrail:arn": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:aws:cloudtrail:*:",
+                        {
+                          "Ref": "AWS::AccountId"
+                        },
+                        ":trail/*"
+                      ]
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "Type": "AWS::KMS::Key"
+    },
+    "CloudTrailDestinationBucket": {
+      "Properties": {
+        "BucketName": {
+          "Ref": "CloudTrailS3BucketName"
+        },
+        "LoggingConfiguration": {
+          "Fn::If": [
+            "BucketLogging",
+            {
+              "DestinationBucketName": {
+                "Ref": "AccessLogsBucketName"
+              },
+              "LogFilePrefix": {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Ref": "CloudTrailS3BucketName"
+                    },
+                    "/"
+                  ]
+                ]
+              }
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "ArchiveToIA",
+              "Status": "Enabled",
+              "Transitions": [
+                {
+                  "StorageClass": "STANDARD_IA",
+                  "TransitionInDays": {
+                    "Ref": "InfrequentAccessTransitionTime"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "Type": "AWS::S3::Bucket"
+    },
+    "BucketPolicy": {
+      "DependsOn": [
+        "CloudTrailDestinationBucket"
+      ],
+      "Properties": {
+        "Bucket": {
+          "Ref": "CloudTrailDestinationBucket"
+        },
+        "PolicyDocument": {
+          "Id": "CloudTrailService",
+          "Statement": [
+            {
+              "Fn::If": [
+                "ExplicitDeny",
+                {
+                  "Action": [
+                    "s3:DeleteBucket",
+                    "s3:DeleteBucketPolicy",
+                    "s3:DeleteBucketWebsite",
+                    "s3:DeleteObject",
+                    "s3:DeleteObjectVersion",
+                    "s3:PutAccelerateConfiguration",
+                    "s3:PutBucketAcl",
+                    "s3:PutBucketCORS",
+                    "s3:PutBucketLogging",
+                    "s3:PutBucketPolicy",
+                    "s3:PutBucketRequestPayment",
+                    "s3:PutBucketVersioning",
+                    "s3:PutBucketWebsite",
+                    "s3:PutLifecycleConfiguration",
+                    "s3:PutReplicationConfiguration",
+                    "s3:ReplicateDelete",
+                    "s3:ReplicateObject",
+                    "s3:RestoreObject"
+                  ],
+                  "Effect": "Deny",
+                  "Principal": "*",
+                  "Resource": [
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:aws:s3:::",
+                          {
+                            "Ref": "CloudTrailDestinationBucket"
+                          },
+                          "/*"
+                        ]
+                      ]
+                    },
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:aws:s3:::",
+                          {
+                            "Ref": "CloudTrailDestinationBucket"
+                          }
+                        ]
+                      ]
+                    }
+                  ],
+                  "Sid": "DenyDestructiveActions"
+                },
+                {
+                  "Ref": "AWS::NoValue"
+                }
+              ]
+            },
+            {
+              "Action": [
+                "s3:GetBucketAcl"
+              ],
+              "Principal": {
+                "Service": "cloudtrail.amazonaws.com"
+              },
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:aws:s3:::",
+                      {
+                        "Ref": "CloudTrailDestinationBucket"
+                      }
+                    ]
+                  ]
+                }
+              ],
+              "Sid": "AllowCloudTrailServiceGetAcl"
+            },
+            {
+              "Action": [
+                "s3:PutObject"
+              ],
+              "Principal": {
+                "Service": "cloudtrail.amazonaws.com"
+              },
+              "Effect": "Allow",
+              "Condition": {
+                "StringEquals": {
+                  "s3:x-amz-acl": "bucket-owner-full-control"
+                }
+              },
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:aws:s3:::",
+                      {
+                        "Ref": "CloudTrailDestinationBucket"
+                      },
+                      "/*"
+                    ]
+                  ]
+                }
+              ],
+              "Sid": "AllowCloudTrailServicePut"
+            }
+          ],
+          "Version": "2012-10-17"
+        }
+      },
+      "Type": "AWS::S3::BucketPolicy"
+    },
+    "SNSTopic": {
+      "Properties": {
+        "Subscription": [
+          {
+            "Endpoint": {
+              "Ref": "AlertEmail"
+            },
+            "Protocol": "email"
+          }
+        ]
+      },
+      "Type": "AWS::SNS::Topic"
+    },
+    "Trail": {
+      "Type": "AWS::CloudTrail::Trail",
+      "DependsOn": [
+        "BucketPolicy",
+        "LogGroup",
+        "CloudTrailRole"
+      ],
+      "Properties": {
+        "S3BucketName": {
+          "Ref": "CloudTrailDestinationBucket"
+        },
+        "CloudWatchLogsLogGroupArn": {
+          "Fn::GetAtt": [
+            "LogGroup",
+            "Arn"
+          ]
+        },
+        "CloudWatchLogsRoleArn": {
+          "Fn::GetAtt": [
+            "CloudTrailRole",
+            "Arn"
+          ]
+        },
+        "EnableLogFileValidation": true,
+        "IncludeGlobalServiceEvents": true,
+        "IsMultiRegionTrail": true,
+        "IsLogging": true,
+        "KMSKeyId": {
+          "Fn::If": [
+            "KMSEncryptLogs",
+            {
+              "Ref": "CloudTrailKMSKey"
+            },
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        }
+      }
+    },
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "RetentionInDays": {
+          "Ref": "CloudWatchLogsRetentionTime"
+        }
+      }
+    },
+    "CloudTrailRole": {
+      "Type": "AWS::IAM::Role",
+      "DependsOn": [
+        "LogGroup"
+      ],
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudtrail.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "logs:CreateLogStream"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": "*"
+                },
+                {
+                  "Action": [
+                    "logs:PutLogEvents"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": "*"
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": "CloudtrailInteractionPolicy"
+          }
+        ]
+      }
+    },
+    "SecurityGroupChangeEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "{ ($.eventName = AuthorizeSecurityGroupIngress) || ($.eventName = AuthorizeSecurityGroupEgress) || ($.eventName = RevokeSecurityGroupIngress) || ($.eventName = RevokeSecurityGroupEgress) || ($.eventName = CreateSecurityGroup) || ($.eventName = DeleteSecurityGroup) }",
+        "MetricTransformations": [
+          {
+            "MetricName": "SecurityGroupChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "SecurityGroupChangeNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "SecurityGroupChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "SecurityGroupChange": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Critical-SecurityGroupChange"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when an API call is made to create, update or delete a Security Group.",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "SecurityGroupChangeEventCount",
+        "Namespace": "CloudTrail-Critical",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "NetworkAclChangeEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "{ ($.eventName = CreateNetworkAcl) || ($.eventName = CreateNetworkAclEntry) || ($.eventName = DeleteNetworkAcl) || ($.eventName = DeleteNetworkAclEntry) || ($.eventName = ReplaceNetworkAclEntry) || ($.eventName = ReplaceNetworkAclAssociation) }",
+        "MetricTransformations": [
+          {
+            "MetricName": "NetworkAclChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "NetworkAclChangeNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "NetworkAclChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "NetworkAclChange": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Critical-NetworkAclChange"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when an API call is made to create, update or delete a Network ACL.",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "NetworkAclChangeEventCount",
+        "Namespace": "CloudTrail-Critical",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "GatewayChangeEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "{ ($.eventName = CreateCustomerGateway) || ($.eventName = DeleteCustomerGateway) || ($.eventName = AttachInternetGateway) || ($.eventName = CreateInternetGateway) || ($.eventName = DeleteInternetGateway) || ($.eventName = DetachInternetGateway) }",
+        "MetricTransformations": [
+          {
+            "MetricName": "GatewayChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "GatewayChangeNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "GatewayChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "GatewayChange": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Critical-GatewayChange"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when an API call is made to create, update or delete a Customer or Internet Gateway.",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "GatewayChangeEventCount",
+        "Namespace": "CloudTrail-Critical",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "VpcChangeEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "{ ($.eventName = CreateVpc) || ($.eventName = DeleteVpc) || ($.eventName = ModifyVpcAttribute) || ($.eventName = *VpcPeeringConnection) || ($.eventName = *ClassicLinkVpc) || ($.eventName = *VpcClassicLink) }",
+        "MetricTransformations": [
+          {
+            "MetricName": "VpcChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "VpcChangeNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "VpcChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "VpcChange": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Critical-VpcChange"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when an API call is made to create, update or delete a VPC, VPC peering connection or VPC connection to classic.",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "VpcChangeEventCount",
+        "Namespace": "CloudTrail-Critical",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "EC2InstanceEventEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "{ ($.eventName = RunInstances) || ($.eventName = RebootInstances) || ($.eventName = StartInstances) || ($.eventName = StopInstances) || ($.eventName = TerminateInstances) }",
+        "MetricTransformations": [
+          {
+            "MetricName": "EC2InstanceEventEventCount",
+            "MetricNamespace": "CloudTrail-Warning",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "EC2InstanceEventNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "EC2InstanceEventEventCount",
+            "MetricNamespace": "CloudTrail-Warning",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "EC2InstanceEvent": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Warning-EC2InstanceEvent"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when an API call is made to create, terminate, start, stop or reboot an EC2 instance.",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "EC2InstanceEventEventCount",
+        "Namespace": "CloudTrail-Warning",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "EC2LargeInstanceEventEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "{ ( ($.eventName = RunInstances) || ($.eventName = RebootInstances) || ($.eventName = StartInstances) || ($.eventName = StopInstances) || ($.eventName = TerminateInstances)) && (($.requestParameters.instanceType = *.8xlarge) || ($.requestParameters.instanceType = *.4xlarge)) }",
+        "MetricTransformations": [
+          {
+            "MetricName": "EC2LargeInstanceEventEventCount",
+            "MetricNamespace": "CloudTrail-Warning",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "EC2LargeInstanceEventNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "EC2LargeInstanceEventEventCount",
+            "MetricNamespace": "CloudTrail-Warning",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "EC2LargeInstanceEvent": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Warning-EC2LargeInstanceEvent"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when an API call is made to create, terminate, start, stop or reboot a 4x or 8x-large EC2 instance.",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "EC2LargeInstanceEventEventCount",
+        "Namespace": "CloudTrail-Warning",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "CloudTrailChangeEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "{ ($.eventName = CreateTrail) || ($.eventName = UpdateTrail) || ($.eventName = DeleteTrail) || ($.eventName = StartLogging) || ($.eventName = StopLogging) }",
+        "MetricTransformations": [
+          {
+            "MetricName": "CloudTrailChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "CloudTrailChangeNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "CloudTrailChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "CloudTrailChange": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Critical-CloudTrailChange"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when an API call is made to create, update or delete a CloudTrail trail, or to start or stop logging to a trail.",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "CloudTrailChangeEventCount",
+        "Namespace": "CloudTrail-Critical",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "CloudWatchChangeEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "{ ($.eventName = PutMetric*) || ($.eventName = PutMetricAlarm) || ($.eventName = DeleteMetricFilter) || ($.eventName = DeleteAlarms) }",
+        "MetricTransformations": [
+          {
+            "MetricName": "CloudWatchChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "CloudWatchChangeNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "CloudWatchChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "CloudWatchChange": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Critical-CloudWatchChange"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when an API call is made to create or delete a CloudTrail metric Filter or metric alarm",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "CloudWatchChangeEventCount",
+        "Namespace": "CloudTrail-Critical",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "ConsoleSignInFailureEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "{ ($.eventName = ConsoleLogin) && ($.errorMessage = \"Failed authentication\") }",
+        "MetricTransformations": [
+          {
+            "MetricName": "ConsoleSignInFailureEventCount",
+            "MetricNamespace": "CloudTrail-Warning",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "ConsoleSignInFailureNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "ConsoleSignInFailureEventCount",
+            "MetricNamespace": "CloudTrail-Warning",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "ConsoleSignInFailure": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Warning-ConsoleSignInFailure"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when an unauthenticated API call is made to sign into the console.",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "ConsoleSignInFailureEventCount",
+        "Namespace": "CloudTrail-Warning",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "AuthorizationFailureEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "{ ($.errorCode = \"*UnauthorizedOperation\") || ($.errorCode = \"AccessDenied*\") }",
+        "MetricTransformations": [
+          {
+            "MetricName": "AuthorizationFailureEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "AuthorizationFailureNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "AuthorizationFailureEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "AuthorizationFailure": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Critical-AuthorizationFailure"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when an unauthorized API call is made.",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "AuthorizationFailureEventCount",
+        "Namespace": "CloudTrail-Critical",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "IAMPolicyChangeEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "{ ($.eventName = *RolePolicy) || ($.eventName = *UserPolicy) || ($.eventName = *GroupPolicy) || ($.eventName = CreatePolic*) || ($.eventName = DeletePolic*) }",
+        "MetricTransformations": [
+          {
+            "MetricName": "IAMPolicyChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "IAMPolicyChangeNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "IAMPolicyChangeEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "IAMPolicyChange": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Critical-IAMPolicyChange"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when an API call is made to change an IAM policy.",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "IAMPolicyChangeEventCount",
+        "Namespace": "CloudTrail-Critical",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "SecurityGroupLaunchWizardEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "{ (($.eventName = AuthorizeSecurityGroupIngress) || ($.eventName = AuthorizeSecurityGroupEgress) || ($.eventName = CreateSecurityGroup)) && ($.requestParameters.groupName = launch-wizard*) }",
+        "MetricTransformations": [
+          {
+            "MetricName": "SecurityGroupLaunchWizardEventCount",
+            "MetricNamespace": "CloudTrail-Warning",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "SecurityGroupLaunchWizardNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "SecurityGroupLaunchWizardEventCount",
+            "MetricNamespace": "CloudTrail-Warning",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter"
+    },
+    "SecurityGroupLaunchWizard": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Warning-SecurityGroupLaunchWizard"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when an API call is made to change an IAM policy.",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "SecurityGroupLaunchWizardEventCount",
+        "Namespace": "CloudTrail-Warning",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm"
+    },
+    "RegionalActivityEvent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": {
+          "Fn::Join": [
+            "",
+            [
+              "{ ( ( ($.eventSource != \"iam.amazonaws.com\") || ($.eventName != \"ConsoleLogin\")) &&  ($.awsRegion != ",
+              {
+                "Ref": "ActivityRegion"
+              },
+              ") ) }"
+            ]
+          ]
+        },
+        "MetricTransformations": [
+          {
+            "MetricName": "RegionalActivityEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "1"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter",
+      "Condition": "MonitorRegionActivity"
+    },
+    "RegionalActivityNoevent": {
+      "Properties": {
+        "LogGroupName": {
+          "Ref": "LogGroup"
+        },
+        "FilterPattern": "",
+        "MetricTransformations": [
+          {
+            "MetricName": "RegionalActivityEventCount",
+            "MetricNamespace": "CloudTrail-Critical",
+            "MetricValue": "0"
+          }
+        ]
+      },
+      "Type": "AWS::Logs::MetricFilter",
+      "Condition": "MonitorRegionActivity"
+    },
+    "RegionalActivity": {
+      "Properties": {
+        "AlarmName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AlarmPrefix"
+              },
+              "Critical-RegionalActivity"
+            ]
+          ]
+        },
+        "AlarmDescription": "Alarms when activity is detecting outside of the selected region",
+        "AlarmActions": [
+          {
+            "Ref": "SNSTopic"
+          }
+        ],
+        "MetricName": "RegionalActivityEventCount",
+        "Namespace": "CloudTrail-Critical",
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": "1",
+        "Period": "300",
+        "Statistic": "Sum",
+        "Threshold": "1"
+      },
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "MonitorRegionActivity"
+    }
+  },
+  "Conditions": {
+    "ExplicitDeny": {
+      "Fn::Equals": [
+        {
+          "Ref": "BucketPolicyExplicitDeny"
+        },
+        "Yes"
+      ]
+    },
+    "KMSEncryptLogs": {
+      "Fn::Equals": [
+        {
+          "Ref": "EncryptLogs"
+        },
+        "Yes"
+      ]
+    },
+    "BucketLogging": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "AccessLogsBucketName"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "MonitorRegionActivity": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "ActivityRegion"
+            },
+            "None"
+          ]
+        }
+      ]
+    }
+  }
+}

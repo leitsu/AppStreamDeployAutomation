@@ -1,0 +1,92 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "AppStream Image Builder",
+	"Parameters": {
+		"ImageName": {
+			"Type": "String",
+			"Description": "The name of the image used to create the image builder",
+			"Default": "Base-Image-Builder-06-12-2018"
+		},
+		"IBName": {
+			"Type": "String",
+			"Description": "Provide the name of the image builder. This name must be unique",
+			"Default": "imagebuilder01"
+		},
+		"IBSG": {
+			"Type": "String",
+			"Description": "Provide the security group id for image builder",
+			"Default": "sg-xxxxxxxxxxxxx"
+		},
+		"DefaultSG": {
+			"Type": "String",
+			"Description": "Provide the default security group id for image builder",
+			"Default": "sg-xxxxxxxxxxxxx"
+		},
+		"IBSubnetCorD": {
+			"Type": "AWS::EC2::Subnet::Id",
+			"Description": "Provide the Subnet id for image builder. Select subnet C or D only.",
+			"Default": "sub-000000"
+		}
+
+	},
+	"Resources": {
+
+		"ImageBuilder": {
+			"Type": "AWS::AppStream::ImageBuilder",
+			"Properties": {
+				"Description": {
+					"Fn::Join": ["", ["Image Builder ", {
+						"Ref": "IBName"
+					}, ""]]
+				},
+				"DisplayName": "IBName",
+				"DomainJoinInfo": {
+					"DirectoryName": "xxxxx.com",
+					"OrganizationalUnitDistinguishedName": "OU=ImageBuilders,OU=AppStream,OU=ITS,OU=MQ-BusUnit-Res,DC=mqauth,DC=uni,DC=mq,DC=edu,DC=au"
+				},
+				"EnableDefaultInternetAccess": false,
+				"ImageName": {
+					"Ref": "ImageName"
+				},
+				"InstanceType": "stream.standard.large",
+				"Name": {
+					"Ref": "IBName"
+				},
+				"VpcConfig": {
+					"SecurityGroupIds": [{
+						"Ref": "IBSG"
+					},{
+						"Ref": "DefaultSG"
+					}
+
+
+				],
+					"SubnetIds": [{
+						"Ref": "IBSubnetCorD"
+					}]
+				}
+			}
+		}
+
+
+	},
+
+
+
+
+	"Outputs": {
+		"URLName": {
+			"Description": "Streaming URL.",
+			"Value": {
+				"Fn::GetAtt": [
+
+                                "ImageBuilder",
+
+                                "StreamingUrl"
+
+                            ]
+
+			}
+		}
+	}
+}

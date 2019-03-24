@@ -1,0 +1,43 @@
+
+
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Create default IAM access groups and policies",
+  "Resources": {
+    "AdminAccessRole": {
+       "Type": "AWS::IAM::Group",
+       "Properties": {
+          "GroupName": "AdminAccessGroup",
+          "ManagedPolicyArns": ["arn:aws:iam::aws:policy/AdministratorAccess"]
+       }
+    },
+    "NetworkAccessRole": {
+       "Type": "AWS::IAM::Group",
+       "Properties": {
+          "GroupName": "NetworkAccessGroup",
+          "ManagedPolicyArns": ["arn:aws:iam::aws:policy/job-function/NetworkAdministrator"]
+       }
+    },
+    "AppStreamAccessRole": {
+       "Type": "AWS::IAM::Group",
+       "Properties": {
+          "GroupName": "AppStreamAccessGroup",
+          "ManagedPolicyArns": ["arn:aws:iam::aws:policy/AmazonAppStreamFullAccess"]
+       }
+    },
+    "SecurityAccessRole": {
+       "Type": "AWS::IAM::Group",
+       "Properties": {
+          "GroupName": "SecurityAccessGroup",
+          "ManagedPolicyArns": ["arn:aws:iam::aws:policy/SecurityAudit"]
+       }
+    },
+    "ReadOnlyAccessRole": {
+       "Type": "AWS::IAM::Group",
+       "Properties": {
+          "GroupName": "ReadOnlyAccessGroup",
+          "ManagedPolicyArns": ["arn:aws:iam::aws:policy/ReadOnlyAccess"]
+       }
+    },
+  }
+  }

@@ -1,0 +1,173 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Create an S3 bucket for logging S3 access logs",
+  "Parameters": {
+    "ExpirationDays": {
+      "Type": "Number",
+      "Description": "Number of days to retain logs in the S3 Bucket before deleting them",
+      "Default": "365"
+    },
+    "S3AccessLogsBucketName": {
+      "Type": "String",
+      "Description": "The name name to use for the S3 bucket to create for storing S3 bucket access logs.",
+      "Default": "application-prodnonprod-purpose-region-accountid",
+      "MinLength": "3",
+      "MaxLength": "63",
+      "AllowedPattern": "([a-zA-Z0-9]){1}([a-zA-Z0-9-])*"
+    },
+    "BucketPolicyExplicitDeny": {
+      "Type": "String",
+      "Description": "OPTIONAL: Explicitly deny destructive actions to the bucket",
+      "Default": "Yes",
+      "AllowedValues": [
+        "No",
+        "Yes"
+      ]
+    }
+  },
+  "Resources": {
+    "AccessLogsBucket": {
+      "Properties": {
+        "BucketName": {
+          "Ref": "S3AccessLogsBucketName"
+        },
+        "AccessControl": "LogDeliveryWrite",
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "Delete",
+              "Status": "Enabled",
+              "ExpirationInDays": {
+                "Ref": "ExpirationDays"
+              }
+            }
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain",
+      "Type": "AWS::S3::Bucket"
+    },
+    "BucketPolicy": {
+      "DependsOn": [
+        "AccessLogsBucket"
+      ],
+      "Properties": {
+        "Bucket": {
+          "Ref": "AccessLogsBucket"
+        },
+        "PolicyDocument": {
+          "Id": "AccessLogs",
+          "Statement": [
+            {
+              "Fn::If": [
+                "ExplicitDeny",
+                {
+                  "Action": [
+                    "s3:DeleteBucket",
+                    "s3:DeleteBucketPolicy",
+                    "s3:DeleteBucketWebsite",
+                    "s3:DeleteObject",
+                    "s3:DeleteObjectVersion",
+                    "s3:PutAccelerateConfiguration",
+                    "s3:PutBucketCORS",
+                    "s3:PutBucketLogging",
+                    "s3:PutBucketPolicy",
+                    "s3:PutBucketRequestPayment",
+                    "s3:PutBucketVersioning",
+                    "s3:PutBucketWebsite",
+                    "s3:PutLifecycleConfiguration",
+                    "s3:PutReplicationConfiguration",
+                    "s3:ReplicateDelete",
+                    "s3:ReplicateObject",
+                    "s3:RestoreObject"
+                  ],
+                  "Effect": "Deny",
+                  "Principal": "*",
+                  "Resource": [
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:aws:s3:::",
+                          {
+                            "Ref": "AccessLogsBucket"
+                          },
+                          "/*"
+                        ]
+                      ]
+                    },
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          "arn:aws:s3:::",
+                          {
+                            "Ref": "AccessLogsBucket"
+                          }
+                        ]
+                      ]
+                    }
+                  ],
+                  "Sid": "DenyDestructiveActions"
+                },
+                {
+                  "Ref": "AWS::NoValue"
+                }
+              ]
+            },
+            {
+              "Action": "s3:PutObject",
+              "Condition": {
+                "StringEquals": {
+                  "s3:x-amz-acl": "bucket-owner-full-control"
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "s3.amazonaws.com"
+              },
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:aws:s3:::",
+                      {
+                        "Ref": "AccessLogsBucket"
+                      },
+                      "/*"
+                    ]
+                  ]
+                }
+              ],
+              "Sid": "S3ServiceWrite"
+            }
+          ],
+          "Version": "2012-10-17"
+        }
+      },
+      "Type": "AWS::S3::BucketPolicy"
+    }
+  },
+  "Outputs": {
+    "AccessLogsBucketName": {
+      "Description": "S3 bucket for S3 service access logging",
+      "Value": {
+        "Ref": "AccessLogsBucket"
+      }
+    }
+  },
+  "Conditions": {
+    "ExplicitDeny": {
+      "Fn::Equals": [
+        {
+          "Ref": "BucketPolicyExplicitDeny"
+        },
+        "Yes"
+      ]
+    }
+  }
+}

@@ -1,0 +1,134 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "AppStream fleet",
+	"Parameters": {
+    "FleetName": {
+			"Type": "String",
+			"Description": "The name of the fleet",
+			"Default": "appstream-fleet-advance"
+		},
+		"StackName": {
+			"Type": "String",
+			"Description": "The name of the stack to associate with the fleet",
+			"Default": "appstream-stack-advance"
+		},
+  		"DirectoryName": {
+  			"Type": "String",
+  			"Description": "The fully qualified name of the directory (for example, corp.example.com)",
+  			"Default": "xxx.com"
+  		},
+      "OULocation": {
+        "Type": "String",
+        "Description": "The location of the Active Directory OU that the instances will be assigned under.",
+        "Default": "OU=AppStreamInstances,OU=AppStream,OU=ITS,OU=MQ-BusUnit-Res,DC=mqauth,DC=uni,DC=mq,DC=edu,DC=au"
+      },
+      "FleetType": {
+        "Type": "String",
+        "Description": "Either ON_DEMAND or ALWAYS_ON",
+        "Default": "ALWAYS_ON"
+      },
+      "ImageName": {
+        "Type": "String",
+        "Description": "The name of the image builder used to create the fleet.",
+				"Default": "Base-Image-Builder-06-12-2018 "
+      },
+		"InstanceType": {
+			"Type": "String",
+			"Description": "The instance type to use when launching fleet instances",
+			"Default": "stream.compute.xlarge"
+		},
+
+    "IBSubnetA": {
+			"Type": "AWS::EC2::Subnet::Id",
+			"Description": "Provide the Subnet A id for fleet instances",
+			"Default": "sub-000000"
+		},
+		"IBSubnetB": {
+			"Type": "AWS::EC2::Subnet::Id",
+			"Description": "Provide the Subnet B id for fleet instances",
+			"Default": "sub-000000"
+		},
+    "DefaultSG": {
+      "Type": "String",
+      "Description": "Provide the default security group id for fleet instances",
+      "Default": "sg-xxxxxxxxxxxx"
+    },
+    "VPC": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "Enter the VPCId that AppStream instances will be deployed to",
+      "Default": "vpc-XXXXXXX",
+      "ConstraintDescription": "Must be a valid VPC ID"
+    }
+
+	},
+	"Resources": {
+
+ "AssociateFleetandStack": {
+  "Type" : "AWS::AppStream::StackFleetAssociation",
+  "Properties" : {
+    "FleetName" : {
+			"Ref": "FleetName"
+		},
+    "StackName" : {
+			"Ref": "StackName"
+		}
+  },
+	"DependsOn" : "Fleet"
+},
+
+
+		"Fleet": {
+      "Type" : "AWS::AppStream::Fleet",
+      "Properties" : {
+        "ComputeCapacity" : {
+				  "DesiredInstances" : "2"
+				},
+        "Description": {
+					"Fn::Join": ["", ["AppStream Fleet - ", {
+						"Ref": "FleetName"
+					}, ""]]
+				},
+        "DisconnectTimeoutInSeconds" : "1800",
+        "DisplayName": {
+					"Ref": "FleetName"
+				},
+        "DomainJoinInfo" : {
+          "DirectoryName" : {
+							"Ref": "DirectoryName"
+						},
+            "OrganizationalUnitDistinguishedName": {
+              "Ref": "OULocation"
+            }
+        },
+        "EnableDefaultInternetAccess" : false,
+        "FleetType" : {
+					"Ref": "FleetType"
+				},
+        "ImageName" : {
+					"Ref": "ImageName"
+				},
+				"InstanceType": {
+					"Ref": "InstanceType"
+				},
+        "MaxUserDurationInSeconds" : "57600",
+        "Name" : {
+					"Ref": "FleetName"
+				},
+        "VpcConfig": {
+					"SecurityGroupIds": [{
+						"Ref": "DefaultSG"
+					}],
+					"SubnetIds": [{
+						"Ref": "IBSubnetA"
+					}, {
+						"Ref": "IBSubnetB"
+					}]
+				}
+
+    }
+    }
+
+
+
+	}
+}

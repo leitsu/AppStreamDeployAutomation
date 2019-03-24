@@ -1,0 +1,64 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "Create AppStream Directory Configuration.",
+	"Parameters": {
+		"DirectoryName": {
+			"Type": "String",
+			"Description": "The fully qualified name of the directory (for example, corp.example.com)",
+			"Default": "xxxx.com"
+		},
+		"ServiceCredential": {
+			"Type": "String",
+			"Description": "Domain join service account credential",
+			"Default": "tes123",
+			"NoEcho": "true"
+		},
+		"ServiceAccountName": {
+			"Type": "String",
+			"Description": "Domain join service account name",
+			"Default": "domain\\testaccount"
+		},
+		"OULocation1": {
+			"Type": "String",
+			"Description": "The location of the Active Directory OU that the instances will be assigned under.",
+			"Default": "OU=AppStreamInstances,OU=AppStream,DC=mqauth,DC=uni,DC=mq,DC=edu,DC=au"
+		},
+		"OULocation2": {
+			"Type": "String",
+			"Description": "The location of the Active Directory OU that the instances will be assigned under.",
+			"Default": "OU=ImageBuilders,OU=AppStream,DC=mqauth,DC=xxx,DC=com"
+		},
+		"OULocation3": {
+			"Type": "String",
+			"Description": "The location of the Active Directory OU that the instances will be assigned under.",
+			"Default": "OU=Test,OU=AppStream,DC=xxx,DC=com"
+		}
+
+	},
+	"Resources": {
+		"Directory": {
+			"Type": "AWS::AppStream::DirectoryConfig",
+			"Properties": {
+				"OrganizationalUnitDistinguishedNames": [{
+					"Ref": "OULocation1"
+				},{
+					"Ref": "OULocation2"
+				},{
+					"Ref": "OULocation3"
+				}
+			],
+				"ServiceAccountCredentials": {
+					"AccountName": {
+						"Ref": "ServiceAccountName"
+					},
+					"AccountPassword": {
+						"Ref": "ServiceCredential"
+					}
+				},
+				"DirectoryName": {
+					"Ref": "DirectoryName"
+				}
+			}
+		}
+	}
+}

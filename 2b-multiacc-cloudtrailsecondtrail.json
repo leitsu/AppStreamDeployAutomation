@@ -1,0 +1,25 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "This template will configure a second CloudTrail trail to log AWS API calls to an S3 bucket outside this account, eg for centralised security logs. The S3 Bucket has a configurable retention policy, after which logs will be moved into infrequently accessed.",
+  "Parameters": {
+    "CloudTrailS3BucketName": {
+      "Type": "String",
+      "Description": "The name of the existing S3 bucket for CloudTrail to send logs to in the other account.",
+      "Default": "cloudtrail-prod-logs-syd-accountid"
+    }
+  },
+  "Resources": {
+    "Trail": {
+      "Type": "AWS::CloudTrail::Trail",
+      "Properties": {
+        "S3BucketName": {
+          "Ref": "CloudTrailS3BucketName"
+        },
+        "EnableLogFileValidation": true,
+        "IncludeGlobalServiceEvents": true,
+        "IsMultiRegionTrail": true,
+        "IsLogging": true
+      }
+    }
+  }
+}

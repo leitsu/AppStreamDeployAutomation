@@ -1,0 +1,860 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Base network VPC deployment.",
+  "Parameters": {
+    "CidrVPC": {
+      "Type": "String",
+      "Description": "CIDR range to use for the VPC",
+      "Default": "10.27.0.0/19"
+    },
+    "Purpose": {
+      "Type": "String",
+      "Description": "The name of this environment.",
+      "Default": "appstream"
+    },
+    "VPCName": {
+      "Type": "String",
+      "Description": "The name of the VPC. Small letters only. Eg, vpc01",
+      "Default": "vpc01"
+    },
+    "CidrPriSubnetA": {
+      "Type": "String",
+      "Description": "CIDR range to use for the private subnet in availability zone A. It must fall within the VPC CIDR",
+      "Default": "10.27.0.0/21"
+    },
+    "CidrPriSubnetB": {
+      "Type": "String",
+      "Description": "CIDR range to use for the private subnet in availability zone B. It must fall within the VPC CIDR",
+      "Default": "10.27.8.0/21"
+    },
+    "CidrPriSubnetC": {
+      "Type": "String",
+      "Description": "CIDR range to use for the private subnet in availability zone A. It must fall within the VPC CIDR",
+      "Default": "10.27.16.0/27"
+    },
+    "CidrPriSubnetD": {
+      "Type": "String",
+      "Description": "CIDR range to use for the private subnet in availability zone B. It must fall within the VPC CIDR",
+      "Default": "10.27.24.0/27"
+    }
+  },
+  "Resources": {
+    "VPC": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": {
+          "Ref": "CidrVPC"
+        },
+        "InstanceTenancy": "default",
+        "EnableDnsSupport": "true",
+        "EnableDnsHostnames": "true",
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "Purpose"
+                  },
+                  "-",
+                  {
+                    "Ref": "VPCName"
+                  }
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ProductionDHCPOptions": {
+      "Type": "AWS::EC2::DHCPOptions",
+      "Properties": {
+        "DomainName": "mqauth.uni.mq.edu.au",
+        "DomainNameServers": [
+          "10.136.0.20", "10.136.0.25","10.26.0.25","10.26.0.30"
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "Purpose"
+                  },
+                  "-",
+                  {
+                    "Ref": "VPCName"
+                  },
+                  "-dhcp"
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ProductionDHCPAssociation": {
+      "Type": "AWS::EC2::VPCDHCPOptionsAssociation",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "DhcpOptionsId": {
+          "Ref": "ProductionDHCPOptions"
+        }
+      }
+    },
+    "PriSubnetA": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "CidrBlock": {
+          "Ref": "CidrPriSubnetA"
+        },
+        "AvailabilityZone": "ap-southeast-2a",
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "Purpose"
+                  },
+                  "-pri-a"
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "PriSubnetB": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "CidrBlock": {
+          "Ref": "CidrPriSubnetB"
+        },
+        "AvailabilityZone": "ap-southeast-2b",
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "Purpose"
+                  },
+                  "-pri-b"
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "PriSubnetC": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "CidrBlock": {
+          "Ref": "CidrPriSubnetC"
+        },
+        "AvailabilityZone": "ap-southeast-2a",
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "Purpose"
+                  },
+                  "-pri-c"
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "PriSubnetD": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "CidrBlock": {
+          "Ref": "CidrPriSubnetD"
+        },
+        "AvailabilityZone": "ap-southeast-2b",
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "Purpose"
+                  },
+                  "-pri-d"
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "PriACL": {
+      "Type": "AWS::EC2::NetworkAcl",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "Purpose"
+                  },
+                  "-",
+                  {
+                    "Ref": "VPCName"
+                  },
+                  "-pri-acl"
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "NACLPriIngress100": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "RuleNumber": "100",
+        "NetworkAclId": {
+          "Ref": "PriACL"
+        },
+        "Protocol": "-1",
+        "RuleAction": "allow",
+        "Egress": "false",
+        "CidrBlock": "10.27.0.0/19",
+        "PortRange": {
+          "From": "0",
+          "To": "65535"
+        }
+      }
+    },
+    "NACLPriIngress200": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "RuleNumber": "200",
+        "NetworkAclId": {
+          "Ref": "PriACL"
+        },
+        "Protocol": "-1",
+        "RuleAction": "allow",
+        "Egress": "false",
+        "CidrBlock": "0.0.0.0/0",
+        "PortRange": {
+          "From": "0",
+          "To": "65535"
+        }
+      }
+    },
+    "NACLPriEgress100": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "RuleNumber": "100",
+        "NetworkAclId": {
+          "Ref": "PriACL"
+        },
+        "Protocol": "-1",
+        "RuleAction": "allow",
+        "Egress": "true",
+        "CidrBlock": "10.27.0.0/19",
+        "PortRange": {
+          "From": "0",
+          "To": "65535"
+        }
+      }
+    },
+    "NACLPriEgress200": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "RuleNumber": "200",
+        "NetworkAclId": {
+          "Ref": "PriACL"
+        },
+        "Protocol": "-1",
+        "RuleAction": "allow",
+        "Egress": "true",
+        "CidrBlock": "0.0.0.0/0",
+        "PortRange": {
+          "From": "0",
+          "To": "65535"
+        }
+      }
+    },
+    "PriNaclAssocSubnetA": {
+      "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PriACL"
+        },
+        "SubnetId": {
+          "Ref": "PriSubnetA"
+        }
+      }
+    },
+    "PriNaclAssocSubnetB": {
+      "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PriACL"
+        },
+        "SubnetId": {
+          "Ref": "PriSubnetB"
+        }
+      }
+    },
+    "PriNaclAssocSubnetC": {
+      "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PriACL"
+        },
+        "SubnetId": {
+          "Ref": "PriSubnetC"
+        }
+      }
+    },
+    "PriNaclAssocSubnetD": {
+      "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PriACL"
+        },
+        "SubnetId": {
+          "Ref": "PriSubnetD"
+        }
+      }
+    },
+    "RouteTablePri": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "Purpose"
+                  },
+                  "-pri",
+                  {
+                    "Ref": "VPCName"
+                  },
+                  "-routetable"
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "PriRouteTableAssocSubnetA": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "RouteTablePri"
+        },
+        "SubnetId": {
+          "Ref": "PriSubnetA"
+        }
+      }
+    },
+    "PriRouteTableAssocSubnetB": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "RouteTablePri"
+        },
+        "SubnetId": {
+          "Ref": "PriSubnetB"
+        }
+      }
+    },
+    "PriRouteTableAssocSubnetC": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "RouteTablePri"
+        },
+        "SubnetId": {
+          "Ref": "PriSubnetC"
+        }
+      }
+    },
+    "PriRouteTableAssocSubnetD": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "RouteTablePri"
+        },
+        "SubnetId": {
+          "Ref": "PriSubnetD"
+        }
+      }
+    },
+    "S3Endpoint": {
+      "Type": "AWS::EC2::VPCEndpoint",
+      "Properties": {
+        "RouteTableIds": [
+          {
+            "Ref": "RouteTablePri"
+          }
+        ],
+        "ServiceName": {
+          "Fn::Join": [
+            "",
+            [
+              "com.amazonaws.",
+              {
+                "Ref": "AWS::Region"
+              },
+              ".s3"
+            ]
+          ]
+        },
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "DefaultSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "VPC Default Security Group.",
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "VPC"
+                  },
+                  "-sg-default01"
+                ]
+              ]
+            }
+          }
+        ],
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "icmp",
+            "FromPort": "-1",
+            "ToPort": "-1",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "88",
+            "ToPort": "88",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "88",
+            "ToPort": "88",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "135",
+            "ToPort": "135",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "135",
+            "ToPort": "135",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "139",
+            "ToPort": "139",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "138",
+            "ToPort": "138",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "389",
+            "ToPort": "389",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "445",
+            "ToPort": "445",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "445",
+            "ToPort": "445",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "464",
+            "ToPort": "464",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "464",
+            "ToPort": "464",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "3268",
+            "ToPort": "3268",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "3269",
+            "ToPort": "3269",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "53",
+            "ToPort": "53",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "53",
+            "ToPort": "53",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "123",
+            "ToPort": "123",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "137",
+            "ToPort": "137",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "389",
+            "ToPort": "389",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "636",
+            "ToPort": "636",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "49152",
+            "ToPort": "65535",
+            "CidrIp": "10.26.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "88",
+            "ToPort": "88",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "88",
+            "ToPort": "88",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "135",
+            "ToPort": "135",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "135",
+            "ToPort": "135",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "139",
+            "ToPort": "139",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "138",
+            "ToPort": "138",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "389",
+            "ToPort": "389",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "445",
+            "ToPort": "445",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "445",
+            "ToPort": "445",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "464",
+            "ToPort": "464",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "464",
+            "ToPort": "464",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "3268",
+            "ToPort": "3268",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "3269",
+            "ToPort": "3269",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "53",
+            "ToPort": "53",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "53",
+            "ToPort": "53",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "123",
+            "ToPort": "123",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "137",
+            "ToPort": "137",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "389",
+            "ToPort": "389",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "636",
+            "ToPort": "636",
+            "CidrIp": "10.136.0.1/27"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "49152",
+            "ToPort": "65535",
+            "CidrIp": "10.136.0.1/27"
+          }
+        ]
+      }
+    },
+    "IBSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "AppStream Default Image Builder Security Group.",
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  {
+                    "Ref": "VPC"
+                  },
+                  "-sg-imagebuilder"
+                ]
+              ]
+            }
+          }
+        ],
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "2701",
+            "ToPort": "2701",
+            "CidrIp": "10.26.0.108/32"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "2701",
+            "ToPort": "2701",
+            "CidrIp": "10.26.0.108/32"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "2702",
+            "ToPort": "2702",
+            "CidrIp": "10.26.0.108/32"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "2702",
+            "ToPort": "2702",
+            "CidrIp": "10.26.0.108/32"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "3389",
+            "ToPort": "3389",
+            "CidrIp": "10.26.0.108/32"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "135",
+            "ToPort": "135",
+            "CidrIp": "10.26.0.108/32"
+          },
+          {
+            "IpProtocol": "udp",
+            "FromPort": "135",
+            "ToPort": "135",
+            "CidrIp": "10.26.0.108/32"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "49152",
+            "ToPort": "65535",
+            "CidrIp": "10.26.0.108/32"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "445",
+            "ToPort": "445",
+            "CidrIp": "10.26.0.108/32"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "VpcId": {
+      "Description": "VPC Id",
+      "Value": {
+        "Ref": "VPC"
+      }
+    },
+    "PriSubnetA": {
+      "Description": "Private Subnet A Id",
+      "Value": {
+        "Ref": "PriSubnetA"
+      }
+    },
+    "PriSubnetB": {
+      "Description": "Private Subnet B Id",
+      "Value": {
+        "Ref": "PriSubnetB"
+      }
+    },
+    "PriSubnetC": {
+      "Description": "Private Subnet C Id",
+      "Value": {
+        "Ref": "PriSubnetC"
+      }
+    },
+    "PriSubnetD": {
+      "Description": "Private Subnet D Id",
+      "Value": {
+        "Ref": "PriSubnetD"
+      }
+    },
+    "DefaultSecurityGroup": {
+      "Description": "Default Subnet Security Group Id",
+      "Value": {
+        "Ref": "DefaultSecurityGroup"
+      }
+    },
+    "RouteTablePri": {
+      "Description": "Private Subnet Route Table",
+      "Value": {
+        "Ref": "RouteTablePri"
+      }
+    }
+  }
+}

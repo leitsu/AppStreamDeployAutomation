@@ -1,0 +1,38 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "AppStream Stack",
+	"Parameters": {
+		"StackName": {
+			"Type": "String",
+			"Description": "The name of the stack",
+			"Default": "appstream-stack-advance"
+		}
+	},
+	"Resources": {
+		"Stack": {
+			"Type": "AWS::AppStream::Stack",
+			"Properties": {
+				"ApplicationSettings": {
+					"Enabled": true,
+					"SettingsGroup": "appstream432851878325"
+				},
+				"Description": {
+					"Fn::Join": ["", ["AppStream Stack - ", {
+						"Ref": "StackName"
+					}, ""]]
+				},
+				"DisplayName": {
+					"Ref": "StackName"
+				},
+
+				"Name": {
+					"Ref": "StackName"
+				},
+				"StorageConnectors": [{
+					"ConnectorType": "HOMEFOLDERS"
+				}]
+			}
+		}
+
+	}
+}
